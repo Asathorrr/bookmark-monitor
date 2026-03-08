@@ -1113,12 +1113,8 @@ def check_one_monitor(monitor_id):
         return jsonify({"error": "未找到监控项"}), 404
     cookie_store = config.get("cookies", {})
     raw_rules    = config.get("selector_rules", {})
-    hostname     = get_hostname(m["url"])
-    use_pw = False
-    for k, v in raw_rules.items():
-        if hostname == k or hostname.endswith("." + k):
-            use_pw = v.get("use_playwright", False) if isinstance(v, dict) else False
-            break
+    rule_obj     = match_rule_obj(m["url"], raw_rules)
+    use_pw       = rule_obj.get("use_playwright", False) if rule_obj else False
     try:
         m["status"] = "checking"
         save_config(config)
