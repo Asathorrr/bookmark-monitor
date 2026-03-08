@@ -1,0 +1,2097 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>书签更新监控系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet" />
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#0d0f14; --surface:#161920; --surface2:#1e2230; --border:#2a2f40;
+  --accent:#4f8ef7; --accent2:#7c5af7; --green:#3dd68c; --red:#f75a5a;
+  --yellow:#f7c948; --muted:#5a6180; --text:#e2e8f7; --text2:#9aa3bd;
+  --font-mono:'JetBrains Mono',monospace; --font-sans:'Noto Sans SC',sans-serif;
+  --radius:8px; --shadow:0 4px 24px rgba(0,0,0,.45);
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.6;}
+
+/* Layout */
+.app{display:grid;grid-template-rows:52px 1fr;grid-template-columns:1fr 1fr;grid-template-areas:"header header" "bookmarks monitors";height:100vh;}
+
+/* Header */
+header{grid-area:header;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border);z-index:10;}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;}
+.logo-icon{width:26px;height:26px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;}
+.header-right{display:flex;align-items:center;gap:10px;}
+.header-meta{font-size:11px;color:var(--muted);font-family:var(--font-mono);}
+
+/* Panels */
+.panel{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);}
+.panel:last-child{border-right:none;}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
+.panel-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);display:flex;align-items:center;gap:6px;}
+.count-badge{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:11px;color:var(--accent);font-family:var(--font-mono);}
+.panel-body{flex:1;overflow-y:auto;padding:10px;}
+.panel-body::-webkit-scrollbar{width:4px;}
+.panel-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+/* Bookmark Tree */
+.tree-folder{margin-bottom:2px;}
+.folder-label{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius);cursor:pointer;user-select:none;font-size:12px;font-weight:500;color:var(--text2);transition:background .12s;position:relative;}
+.folder-label:hover{background:var(--surface2);}
+.folder-label:hover .folder-batch-btn{opacity:1;}
+.caret{font-size:8px;color:var(--muted);transition:transform .18s;flex-shrink:0;}
+.folder-label.open .caret{transform:rotate(90deg);}
+.folder-children{padding-left:12px;border-left:1px solid var(--border);margin-left:11px;display:none;}
+.folder-children.open{display:block;}
+.folder-batch-btn{opacity:0;margin-left:auto;flex-shrink:0;padding:1px 8px;border-radius:3px;background:transparent;border:1px solid var(--accent2);color:var(--accent2);font-size:10px;font-family:var(--font-mono);cursor:pointer;transition:all .12s;white-space:nowrap;}
+.folder-batch-btn:hover{background:var(--accent2);color:#fff;}
+
+.bookmark-item{display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:var(--radius);transition:background .12s;}
+.bookmark-item:hover{background:var(--surface2);}
+.bookmark-item:hover .add-btn{opacity:1;}
+.bookmark-item.in-monitor{opacity:.4;}
+.bookmark-item.in-monitor .add-btn{display:none;}
+.bookmark-favicon{width:13px;height:13px;flex-shrink:0;opacity:.7;}
+.bookmark-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;}
+.add-btn{opacity:0;flex-shrink:0;padding:1px 8px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;font-size:10px;font-family:var(--font-mono);cursor:pointer;transition:all .12s;}
+.add-btn:hover{background:var(--accent);color:#fff;}
+
+/* Search */
+.search-bar{padding:8px 10px 0;flex-shrink:0;}
+.search-input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;font-family:var(--font-sans);outline:none;transition:border-color .2s;}
+.search-input:focus{border-color:var(--accent);}
+.search-input::placeholder{color:var(--muted);}
+
+/* Summary Bar */
+.summary-bar{display:flex;gap:14px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;}
+.s-item{display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono);color:var(--text2);}
+.s-dot{width:6px;height:6px;border-radius:50%;}
+
+/* Check button */
+.check-btn{display:flex;align-items:center;gap:7px;padding:6px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .2s;font-family:var(--font-sans);}
+.check-btn:hover{opacity:.85;}
+.check-btn:disabled{opacity:.4;cursor:not-allowed;}
+.check-btn .spinner{width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none;}
+.check-btn.loading .spinner{display:block;}
+.check-btn.loading .btn-icon{display:none;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Path Group */
+.path-group{margin-bottom:6px;}
+.path-group-header{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none;transition:background .12s;}
+.path-group-header:hover{background:var(--surface2);}
+.pg-caret{font-size:8px;transition:transform .18s;}
+.path-group-header.open .pg-caret{transform:rotate(90deg);}
+.pg-count{margin-left:auto;background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:0 5px;font-size:10px;color:var(--accent);font-family:var(--font-mono);}
+.path-crumb-sep{color:var(--border);font-size:10px;margin:0 1px;}
+.path-group-body{display:none;padding-left:4px;}
+.path-group-body.open{display:block;}
+
+/* Monitor Card */
+.monitor-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:11px 14px;margin-bottom:6px;position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s;}
+.monitor-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--muted);transition:background .3s;}
+.monitor-card.status-changed::before{background:var(--red);}
+.monitor-card.status-unchanged::before{background:var(--green);}
+.monitor-card.status-checking::before{background:var(--yellow);}
+.monitor-card.status-error::before{background:var(--red);opacity:.45;}
+.monitor-card.status-changed{border-color:rgba(247,90,90,.3);animation:pulse-red 2s ease-in-out infinite;}
+@keyframes status-flash-anim{0%{box-shadow:0 0 0 0 rgba(247,90,90,.7)}60%{box-shadow:0 0 0 8px rgba(247,90,90,0)}100%{box-shadow:0 0 0 0 rgba(247,90,90,0)}}
+.monitor-card.status-flash{animation:status-flash-anim .6s ease-out, pulse-red 2s ease-in-out 0.6s infinite;}
+@keyframes pulse-red{0%,100%{box-shadow:0 0 0 rgba(247,90,90,0)}50%{box-shadow:0 0 14px rgba(247,90,90,.18)}}
+
+.card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:5px;}
+.card-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.card-actions{display:flex;gap:5px;flex-shrink:0;}
+.card-url{font-family:var(--font-mono);font-size:10px;color:var(--accent);text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px;}
+.card-url:hover{text-decoration:underline;}
+.card-meta{display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);flex-wrap:wrap;}
+.selector-tag{display:inline-flex;align-items:center;gap:3px;background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:1px 6px;font-size:10px;color:var(--accent2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.error-detail{margin:5px 0;background:rgba(247,90,90,.07);border:1px solid rgba(247,90,90,.2);border-radius:4px;padding:5px 8px;font-size:10px;font-family:var(--font-mono);color:#f79090;line-height:1.5;word-break:break-all;}
+
+/* Badge */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:100px;font-size:10px;font-weight:600;font-family:var(--font-mono);white-space:nowrap;}
+.badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
+.badge-pending{background:rgba(90,97,128,.2);color:var(--muted);border:1px solid rgba(90,97,128,.3);}
+.badge-checking{background:rgba(247,201,72,.15);color:var(--yellow);border:1px solid rgba(247,201,72,.3);}
+.badge-changed{background:rgba(247,90,90,.15);color:var(--red);border:1px solid rgba(247,90,90,.3);}
+.badge-unchanged{background:rgba(61,214,140,.12);color:var(--green);border:1px solid rgba(61,214,140,.25);}
+.badge-error{background:rgba(247,90,90,.08);color:#f79090;border:1px solid rgba(247,90,90,.2);}
+.badge-checking .badge-dot{animation:blink .9s ease-in-out infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+
+/* Buttons */
+.btn-sm{padding:2px 9px;border-radius:4px;font-size:10px;font-family:var(--font-mono);cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--text2);transition:all .12s;white-space:nowrap;}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent);}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red);}
+.btn-sm.success{border-color:var(--green);color:var(--green);}
+.btn-sm.success:hover{background:rgba(61,214,140,.1);}
+
+/* Modals */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:460px;max-width:96vw;box-shadow:var(--shadow);animation:slide-up .22s ease;max-height:90vh;overflow-y:auto;}
+@keyframes slide-up{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal::-webkit-scrollbar{width:4px;}
+.modal::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+.modal-title{font-size:15px;font-weight:700;margin-bottom:5px;}
+.modal-desc{font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.65;}
+.modal-url{font-family:var(--font-mono);font-size:10px;color:var(--accent);word-break:break-all;background:var(--surface2);padding:5px 9px;border-radius:4px;margin-bottom:14px;}
+label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text2);margin-bottom:5px;}
+input[type="text"],textarea{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;outline:none;transition:border-color .2s;margin-bottom:14px;}
+input[type="text"]:focus,textarea:focus{border-color:var(--accent);}
+input[type="text"]::placeholder,textarea::placeholder{color:var(--muted);}
+textarea{resize:vertical;min-height:64px;line-height:1.5;}
+.modal-hint{font-size:11px;color:var(--muted);margin-top:-10px;margin-bottom:16px;line-height:1.6;}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;}
+.btn-primary{padding:7px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s;font-family:var(--font-sans);}
+.btn-primary:hover{opacity:.85;}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-cancel{padding:7px 14px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;font-family:var(--font-sans);transition:border-color .2s;}
+.btn-cancel:hover{border-color:var(--muted);}
+
+/* Batch preview */
+.batch-preview{background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:14px;font-size:11px;font-family:var(--font-mono);}
+.batch-preview::-webkit-scrollbar{width:3px;}
+.batch-preview::-webkit-scrollbar-thumb{background:var(--border);}
+.batch-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--border);}
+.batch-row:last-child{border-bottom:none;}
+.batch-row.skip{opacity:.4;}
+.batch-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
+.batch-status{flex-shrink:0;color:var(--muted);}
+.batch-status.new-item{color:var(--green);}
+.batch-status.dup-item{color:var(--yellow);}
+
+/* Cookie */
+.cookie-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;font-family:var(--font-mono);}
+.cookie-domain{color:var(--accent2);flex-shrink:0;}
+.cookie-val{color:var(--muted);flex:1;}
+
+/* Empty */
+.empty{text-align:center;padding:40px 20px;color:var(--muted);}
+.empty-icon{font-size:32px;margin-bottom:10px;}
+.empty-title{font-size:13px;font-weight:500;color:var(--text2);margin-bottom:5px;}
+.empty-desc{font-size:11px;}
+
+/* Toast */
+#toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--green);color:var(--text);padding:10px 16px;border-radius:8px;font-size:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:opacity .22s,transform .22s;z-index:999;max-width:300px;}
+#toast.show{opacity:1;transform:translateY(0);}
+#toast.error{border-left-color:var(--red);}
+
+/* Diff modal */
+.diff-modal-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;gap:12px;}
+.diff-modal-meta{font-size:11px;color:var(--muted);font-family:var(--font-mono);}
+.diff-open-link{flex-shrink:0;font-size:11px;color:var(--accent);text-decoration:none;border:1px solid rgba(79,142,247,.3);padding:3px 9px;border-radius:4px;white-space:nowrap;}
+.diff-open-link:hover{background:rgba(79,142,247,.1);}
+.diff-legend{display:flex;gap:10px;margin-bottom:10px;}
+.diff-tag{font-size:10px;font-family:var(--font-mono);padding:2px 7px;border-radius:3px;}
+.diff-tag-ins{background:rgba(61,214,140,.15);color:var(--green);border:1px solid rgba(61,214,140,.25);}
+.diff-tag-del{background:rgba(247,90,90,.12);color:var(--red);border:1px solid rgba(247,90,90,.25);}
+.diff-tag-eq{background:var(--surface2);color:var(--muted);border:1px solid var(--border);}
+.diff-body{overflow-y:auto;max-height:52vh;border:1px solid var(--border);border-radius:6px;font-size:13px;line-height:1.75;font-family:var(--font-sans);}
+.diff-seg{padding:6px 14px;border-bottom:1px solid rgba(255,255,255,.04);}
+.diff-seg:last-child{border-bottom:none;}
+.diff-seg.ins{background:rgba(61,214,140,.08);border-left:3px solid var(--green);color:var(--text);}
+.diff-seg.del{background:rgba(247,90,90,.07);border-left:3px solid var(--red);color:#e88;text-decoration:line-through;text-decoration-color:rgba(247,90,90,.5);}
+.diff-seg.eq{color:var(--text2);border-left:3px solid transparent;}
+.diff-seg.fold{color:var(--muted);font-size:11px;font-style:italic;border-left:3px solid transparent;padding:4px 14px;background:var(--surface2);}
+.diff-seg .diff-prefix{font-family:var(--font-mono);font-size:11px;margin-right:6px;opacity:.6;}
+.diff-empty{padding:24px;text-align:center;color:var(--muted);font-size:13px;}
+
+/* Selector test result */
+.selector-test-result{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;font-family:var(--font-mono);max-height:220px;overflow-y:auto;margin-bottom:10px;}
+.selector-test-result .test-ok{color:var(--green);margin-bottom:6px;font-weight:600;}
+.selector-test-result .test-err{color:var(--red);margin-bottom:6px;}
+.selector-test-result .test-warn{color:var(--yellow);margin-bottom:6px;}
+.selector-test-result .test-line{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text2);white-space:pre-wrap;word-break:break-all;}
+.selector-test-result .test-line:last-child{border-bottom:none;}
+
+/* Selector rules list */
+.rule-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;background:var(--surface2);margin-bottom:5px;font-size:12px;font-family:var(--font-mono);}
+.rule-domain{color:var(--accent2);flex-shrink:0;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rule-arrow{color:var(--muted);flex-shrink:0;}
+.rule-selector{color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rule-delay{flex-shrink:0;font-size:10px;color:var(--muted);font-family:var(--font-mono);white-space:nowrap;}
+.rule-actions{display:flex;gap:4px;flex-shrink:0;}
+
+/* Bookmark select mode */
+.bm-checkbox{width:14px;height:14px;flex-shrink:0;accent-color:var(--accent);cursor:pointer;display:none;margin-right:2px;}
+.bm-select-mode .bm-checkbox{display:block;}
+.bm-select-mode .bookmark-item{cursor:pointer;}
+.bm-select-mode .bookmark-item:hover{background:var(--surface2);}
+.bookmark-item.bm-selected{background:rgba(79,142,247,.08)!important;outline:1px solid rgba(79,142,247,.3);border-radius:var(--radius);}
+.bm-select-mode .add-btn{display:none;}
+
+/* Select mode */
+.select-mode-btn{padding:5px 12px;border-radius:5px;font-size:11px;font-family:var(--font-mono);cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--text2);transition:all .15s;}
+.select-mode-btn.active{border-color:var(--red);color:var(--red);background:rgba(247,90,90,.08);}
+.card-checkbox{width:15px;height:15px;flex-shrink:0;accent-color:var(--accent);cursor:pointer;display:none;margin-right:2px;}
+.select-mode .card-checkbox{display:block;}
+.select-mode .monitor-card{cursor:pointer;}
+.select-mode .monitor-card:hover{border-color:var(--accent);}
+.monitor-card.selected{border-color:var(--accent)!important;background:rgba(79,142,247,.06);}
+.monitor-card.selected::before{background:var(--accent)!important;}
+.group-select-all{display:none;padding:1px 7px;border-radius:3px;font-size:10px;font-family:var(--font-mono);cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .12s;margin-left:6px;}
+.select-mode .group-select-all{display:inline-block;}
+.group-select-all:hover{border-color:var(--accent);color:var(--accent);}
+
+/* Floating action bar */
+.float-bar{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(200px);
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:10px 18px;display:flex;align-items:center;gap:14px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:200;
+  transition:transform .25s cubic-bezier(.34,1.56,.64,1);
+  white-space:nowrap;
+  pointer-events:none;opacity:0;
+}
+.float-bar.show{transform:translateX(-50%) translateY(0);pointer-events:auto;opacity:1;}
+.float-bar-count{font-size:13px;font-weight:600;color:var(--text);font-family:var(--font-mono);}
+.float-bar-count span{color:var(--accent);}
+.float-bar-divider{width:1px;height:20px;background:var(--border);}
+.float-btn{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:var(--font-sans);border:none;}
+.float-btn-del{background:rgba(247,90,90,.15);color:var(--red);border:1px solid rgba(247,90,90,.3);}
+.float-btn-del:hover{background:var(--red);color:#fff;}
+.float-btn-cancel{background:var(--surface2);color:var(--text2);border:1px solid var(--border);}
+.float-btn-cancel:hover{border-color:var(--muted);color:var(--text);}
+.float-btn-selall{background:transparent;color:var(--accent);border:1px solid rgba(79,142,247,.3);}
+.float-btn-selall:hover{background:rgba(79,142,247,.1);}
+
+/* Progress bar */
+.progress-wrap{padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;display:none;}
+.progress-wrap.active{display:block;}
+.progress-bar-bg{height:4px;background:var(--surface2);border-radius:2px;overflow:hidden;}
+.progress-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px;transition:width .4s ease;width:0%;}
+.progress-text{font-size:10px;font-family:var(--font-mono);color:var(--muted);margin-top:4px;}
+
+/* Skeleton */
+.skeleton{background:linear-gradient(90deg,var(--surface2) 25%,var(--surface) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:4px;height:28px;margin-bottom:5px;}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+/* Bookmark Sync Modal */
+.sync-modal { width: 560px; }
+.sync-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--text2); margin: 16px 0 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sync-section-title .sync-count-badge {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 6px; font-size: 11px;
+  color: var(--accent); font-family: var(--font-mono); text-transform: none; letter-spacing: 0;
+}
+.sync-list {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; max-height: 200px; overflow-y: auto; margin-bottom: 4px;
+}
+.sync-list::-webkit-scrollbar { width: 3px; }
+.sync-list::-webkit-scrollbar-thumb { background: var(--border); }
+.sync-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  font-size: 12px; transition: background .1s;
+}
+.sync-row:last-child { border-bottom: none; }
+.sync-row:hover { background: rgba(255,255,255,.03); }
+.sync-row-cb { width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
+.sync-row-favicon { width: 13px; height: 13px; flex-shrink: 0; opacity: .7; }
+.sync-row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.sync-row-path { font-size: 10px; color: var(--muted); font-family: var(--font-mono); flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-row-del { font-size: 10px; font-family: var(--font-mono); padding: 1px 7px; border-radius: 3px; flex-shrink: 0; }
+.sync-row-del.was-monitored { background: rgba(247,90,90,.12); color: var(--red); border: 1px solid rgba(247,90,90,.25); }
+.sync-row-del.not-monitored { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.sync-selall-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  font-size: 11px; color: var(--text2);
+}
+.sync-selall-row button {
+  padding: 2px 8px; border-radius: 3px; font-size: 10px; font-family: var(--font-mono);
+  cursor: pointer; border: 1px solid rgba(79,142,247,.3); background: transparent;
+  color: var(--accent); transition: all .12s;
+}
+.sync-selall-row button:hover { background: rgba(79,142,247,.1); }
+.sync-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 12px; }
+.sync-notify-dot {
+  display: none; position: absolute; top: -3px; right: -3px;
+  width: 8px; height: 8px; background: var(--red); border-radius: 50%;
+  border: 2px solid var(--surface); animation: blink 1.2s ease-in-out infinite;
+}
+.sync-notify-dot.show { display: block; }
+.sync-trigger-btn { position: relative; }
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🔖</div>
+      书签更新监控系统
+    </div>
+    <div class="header-right">
+      <button class="btn-sm sync-trigger-btn" id="sync-trigger-btn" onclick="openSyncModal()" style="border-color:var(--green);color:var(--green)">
+        ⇄ 书签同步
+        <span class="sync-notify-dot" id="sync-notify-dot"></span>
+      </button>
+      <button class="btn-sm" onclick="openRulesModal()" style="border-color:var(--accent);color:var(--accent)">⌖ 域名规则</button>
+      <button class="btn-sm" onclick="openCookieModal()" style="border-color:var(--accent2);color:var(--accent2)">🍪 Cookie</button>
+      <div class="header-meta" id="last-check-time">从未检查</div>
+    </div>
+  </header>
+
+  <!-- Left: Bookmarks -->
+  <div class="panel" style="grid-area:bookmarks">
+    <div class="panel-header">
+      <div class="panel-title">Chrome 书签 <span class="count-badge" id="bm-count">0</span></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="select-mode-btn" id="bm-select-btn" onclick="toggleBmSelectMode()">☑ 选择</button>
+        <button class="btn-sm" onclick="loadBookmarks()">↻ 刷新</button>
+      </div>
+    </div>
+    <div class="search-bar">
+      <input class="search-input" type="text" id="bm-search" placeholder="搜索书签名称或 URL…" oninput="filterBookmarks()" />
+    </div>
+    <div class="panel-body" id="bookmarks-tree">
+      <div class="skeleton"></div>
+      <div class="skeleton" style="width:75%;opacity:.6"></div>
+      <div class="skeleton" style="width:55%;opacity:.4"></div>
+    </div>
+  </div>
+
+  <!-- Right: Monitors -->
+  <div class="panel" style="grid-area:monitors">
+    <div class="panel-header">
+      <div class="panel-title">监控仪表盘 <span class="count-badge" id="mon-count">0</span></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="select-mode-btn" id="select-mode-btn" onclick="toggleSelectMode()">☑ 选择</button>
+        <button class="btn-sm" title="清空所有监控项的历史基准，下次检查重新采集" onclick="resetAllBaselines()" style="border-color:var(--yellow);color:var(--yellow)">↺ 重置基准</button>
+        <button class="check-btn" id="check-btn" onclick="checkAll()">
+          <span class="btn-icon">⚡</span><span class="spinner"></span>一键检查更新
+        </button>
+      </div>
+    </div>
+    <div class="summary-bar">
+      <div class="s-item"><div class="s-dot" style="background:var(--red)"></div><span id="s-changed">0 有更新</span></div>
+      <div class="s-item"><div class="s-dot" style="background:var(--green)"></div><span id="s-unchanged">0 无变化</span></div>
+      <div class="s-item"><div class="s-dot" style="background:var(--muted)"></div><span id="s-pending">0 待检查</span></div>
+      <div class="s-item"><div class="s-dot" style="background:var(--red);opacity:.5"></div><span id="s-error">0 出错</span></div>
+    </div>
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">准备中…</div>
+    </div>
+    <div class="panel-body" id="monitors-list">
+      <div class="empty"><div class="empty-icon">📡</div><div class="empty-title">暂无监控项</div><div class="empty-desc">在左侧书签中点击「＋」或文件夹的「⊞ 批量添加」</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Single Add Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title">添加监控项</div>
+    <div class="modal-desc">指定 CSS 选择器来监控页面特定区域，留空则监控整个页面正文。</div>
+    <div class="modal-url" id="modal-url"></div>
+    <label>CSS 选择器（可选）</label>
+    <input type="text" id="modal-selector" placeholder="#content、.price、article …" />
+    <div class="modal-hint">💡 F12 → 右键目标元素 → 复制 → 复制 selector</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-primary" onclick="confirmAdd()">确认添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- Batch Add Modal -->
+<div class="modal-overlay" id="batch-modal">
+  <div class="modal" style="width:520px">
+    <div class="modal-title">⊞ 批量添加监控</div>
+    <div class="modal-desc" id="batch-desc"></div>
+    <label>统一 CSS 选择器（可选，所有书签使用同一选择器）</label>
+    <input type="text" id="batch-selector" placeholder="留空则监控整个页面正文" />
+    <div class="modal-hint">💡 同一网站下的书签建议统一填写选择器，不同网站可留空</div>
+    <label>
+      书签预览
+      &nbsp;<span id="batch-new-count" style="color:var(--green);font-family:var(--font-mono);font-size:11px;text-transform:none;letter-spacing:0"></span>
+      &nbsp;<span id="batch-dup-count" style="color:var(--yellow);font-family:var(--font-mono);font-size:11px;text-transform:none;letter-spacing:0"></span>
+    </label>
+    <div class="batch-preview" id="batch-preview"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeBatchModal()">取消</button>
+      <button class="btn-primary" id="batch-confirm-btn" onclick="confirmBatch()">批量添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- Cookie Modal -->
+<div class="modal-overlay" id="cookie-modal">
+  <div class="modal" style="width:500px">
+    <div class="modal-title">🍪 设置网站 Cookie</div>
+    <div class="modal-desc">对于需要登录或有 Cloudflare 保护的网站，请提供 Cookie。<br/>
+      <strong style="color:var(--yellow)">获取方法：</strong>登录后 F12 → Network → 任意请求 → Request Headers → 复制 <code style="color:var(--accent);background:var(--surface2);padding:1px 4px;border-radius:3px">cookie:</code> 的值。</div>
+    <label>域名（如 javdb.com）</label>
+    <input type="text" id="ck-domain" placeholder="javdb.com" />
+    <label>Cookie 值</label>
+    <textarea id="ck-value" placeholder="_jdb_session=xxx; over18=1; cf_clearance=..."></textarea>
+    <div id="ck-saved-list" style="margin-bottom:14px"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeCookieModal()">关闭</button>
+      <button class="btn-primary" onclick="saveCookie()">保存 Cookie</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bookmark Sync Modal -->
+<div class="modal-overlay" id="sync-modal">
+  <div class="modal sync-modal">
+    <div class="modal-title">⇄ 书签同步</div>
+    <div class="modal-desc" id="sync-modal-desc">正在对比书签变化…</div>
+
+    <!-- 新增书签区域 -->
+    <div id="sync-added-section" style="display:none">
+      <div class="sync-section-title">
+        <span style="color:var(--green)">＋ 新增书签</span>
+        <span class="sync-count-badge" id="sync-added-count">0</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">勾选后加入监控</span>
+      </div>
+      <div class="sync-selall-row">
+        <button onclick="syncSelectAll()">全选</button>
+        <button onclick="syncSelectNone()">取消全选</button>
+      </div>
+      <div class="sync-list" id="sync-added-list"></div>
+    </div>
+
+    <!-- 已删除书签区域 -->
+    <div id="sync-removed-section" style="display:none">
+      <div class="sync-section-title">
+        <span style="color:var(--red)">－ 已删除书签</span>
+        <span class="sync-count-badge" id="sync-removed-count">0</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">监控中的项目已自动移除</span>
+      </div>
+      <div class="sync-list" id="sync-removed-list"></div>
+    </div>
+
+    <!-- 无变化 -->
+    <div id="sync-nochange" style="display:none" class="sync-empty">
+      ✓ 书签无变化
+    </div>
+
+    <div class="modal-actions" style="margin-top:20px">
+      <button class="btn-cancel" onclick="closeSyncModal()">关闭</button>
+      <button class="btn-primary" id="sync-add-btn" onclick="confirmSyncAdd()" style="display:none">
+        加入监控
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Floating batch-delete bar -->
+<div class="float-bar" id="float-bar">
+  <div class="float-bar-count">已选 <span id="float-sel-count">0</span> 项</div>
+  <div class="float-bar-divider"></div>
+  <button class="float-btn float-btn-selall" onclick="selectAll()">全选</button>
+  <button class="float-btn float-btn-selall" onclick="selectNone()">取消全选</button>
+  <div class="float-bar-divider"></div>
+  <button class="float-btn float-btn-del" onclick="batchDelete()">🗑 批量删除</button>
+  <button class="float-btn float-btn-cancel" onclick="toggleSelectMode()">退出选择</button>
+</div>
+
+<!-- Floating bookmark batch-add bar -->
+<div class="float-bar" id="bm-float-bar" style="bottom:80px;transform:translateX(-50%) translateY(200px)">
+  <div class="float-bar-count">已选 <span id="bm-float-count">0</span> 个书签</div>
+  <div class="float-bar-divider"></div>
+  <button class="float-btn float-btn-selall" onclick="bmSelectAll()">全选</button>
+  <button class="float-btn float-btn-selall" onclick="bmSelectNone()">取消全选</button>
+  <div class="float-bar-divider"></div>
+  <button class="float-btn" style="background:rgba(79,142,247,.15);color:var(--accent);border:1px solid rgba(79,142,247,.3)" onclick="openBmBatchAddModal()">＋ 批量添加监控</button>
+  <button class="float-btn float-btn-cancel" onclick="toggleBmSelectMode()">退出选择</button>
+</div>
+
+<!-- Edit Monitor Modal -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-title">✏ 编辑监控项</div>
+    <div class="modal-url" id="edit-modal-url"></div>
+    <label>名称</label>
+    <input type="text" id="edit-name" />
+    <label>CSS 选择器（留空则监控整个页面正文）</label>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" id="edit-selector" placeholder="#content、.price、article …" style="flex:1;margin-bottom:0" />
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--accent);color:var(--accent)" onclick="testSelectorFromEdit()">▶ 测试</button>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" id="edit-search-text" placeholder="🔍 输入页面上的文字来查找它属于哪个选择器…" style="flex:1;margin-bottom:0;font-size:11px" />
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--muted);color:var(--muted)" onclick="searchTextFromEdit(false)">查找</button>
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--yellow);color:var(--yellow);white-space:nowrap" onclick="searchTextFromEdit(true)" title="页面内容由JavaScript动态加载时使用">🌐 浏览器</button>
+    </div>
+    <div id="edit-test-result" class="selector-test-result" style="display:none"></div>
+    <div class="modal-hint" id="edit-rule-hint" style="display:none">
+      💡 保存后可在「⌖ 域名规则」中为此域名批量应用选择器
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeEditModal()">取消</button>
+      <button class="btn-primary" onclick="confirmEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Selector Rules Modal -->
+<div class="modal-overlay" id="rules-modal">
+  <div class="modal" style="width:560px">
+    <div class="modal-title">⌖ 域名选择器规则</div>
+    <div class="modal-desc">为网站（或特定路径）配置默认 CSS 选择器和请求延迟。支持精确到路径前缀，如 <code style="font-size:11px">site.com/writers</code> 比 <code style="font-size:11px">site.com</code> 优先级更高。</div>
+    <div style="display:flex;gap:8px;margin-bottom:4px">
+      <div style="flex:1.2">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">域名或路径前缀</div>
+        <input type="text" id="rule-domain" placeholder="site.com 或 site.com/writers" style="width:100%;margin-bottom:0" oninput="onRuleDomainInput(this)" />
+      </div>
+      <div style="flex:1.5">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">CSS 选择器</div>
+        <input type="text" id="rule-selector" placeholder=".content、#list、table tr …" style="width:100%;margin-bottom:0" />
+      </div>
+      <div style="flex-shrink:0;width:80px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">间隔(秒)</div>
+        <input type="number" id="rule-delay" min="0" max="60" value="2" style="width:100%;margin-bottom:0" title="同域名请求间隔秒数" />
+      </div>
+      <div style="flex-shrink:0;align-self:flex-end;padding-bottom:2px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;font-size:11px;color:var(--yellow)" title="页面内容由 JavaScript 动态加载时勾选，监控时将使用无头浏览器（较慢）">
+          <input type="checkbox" id="rule-use-playwright" style="accent-color:var(--yellow)" />
+          🌐 JS渲染
+        </label>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-end">
+      <div style="flex:1">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">测试 URL（粘贴完整页面地址，用于验证选择器效果）</div>
+        <input type="text" id="rule-test-url" placeholder="https://site.com/writers/123" style="width:100%;margin-bottom:0;font-size:11px" />
+      </div>
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--accent);color:var(--accent);white-space:nowrap;height:32px" onclick="testSelectorFromRule()">▶ 测试</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+      <input type="text" id="rule-search-text" placeholder="🔍 输入页面上的文字来查找它属于哪个选择器…" style="flex:1;margin-bottom:0;font-size:11px" />
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--muted);color:var(--muted);white-space:nowrap" onclick="searchTextFromRule(false)">查找</button>
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--yellow);color:var(--yellow);white-space:nowrap" onclick="searchTextFromRule(true)" title="页面内容由JavaScript动态加载时使用">🌐 浏览器渲染后查找</button>
+    </div>
+    <div id="rule-domain-warn" style="display:none;color:var(--yellow);font-size:11px;margin-bottom:6px">⚠️ 请填写域名或路径前缀，不要包含 https:// 协议头</div>
+    <div id="rule-test-result" class="selector-test-result" style="display:none;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">
+      <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="saveRule()">保存规则</button>
+      <button class="btn-sm" style="flex-shrink:0;border-color:var(--yellow);color:var(--yellow);white-space:nowrap" onclick="debugRender('rule')" title="用 Playwright 渲染测试URL并保存HTML，方便在浏览器里查看页面结构">🔬 渲染调试</button>
+      <div class="modal-hint" style="margin:0;flex:1" id="rule-match-hint"></div>
+    </div>
+    <div id="rules-list" style="margin-bottom:4px"></div>
+    <div class="modal-actions" style="margin-top:8px">
+      <button class="btn-cancel" onclick="closeRulesModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Diff Modal -->
+<div class="modal-overlay" id="diff-modal">
+  <div class="modal" style="width:680px;max-height:82vh">
+    <div class="diff-modal-header">
+      <div>
+        <div class="modal-title" style="margin-bottom:2px">📄 内容变更详情</div>
+        <div class="diff-modal-meta" id="diff-meta"></div>
+      </div>
+      <a class="diff-open-link" id="diff-open-link" target="_blank" rel="noopener">↗ 打开页面</a>
+    </div>
+    <div class="diff-legend">
+      <span class="diff-tag diff-tag-ins">＋ 新增</span>
+      <span class="diff-tag diff-tag-del">－ 删除</span>
+      <span class="diff-tag diff-tag-eq">  上下文</span>
+    </div>
+    <div class="diff-body" id="diff-body"></div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeDiffModal()">关闭</button>
+      <button class="btn-primary" onclick="markReadFromDiff()">✓ 标记已读</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════
+// State
+// ══════════════════════════════════
+let allBookmarks  = [];
+let monitoredUrls = new Set();
+let monitors      = [];
+let selectMode    = false;
+let selectedIds   = new Set();
+
+// 书签选择模式
+let bmSelectMode      = false;
+let bmSelectedItems   = new Map();   // url → bookmark object
+let bmRenderedOrder   = [];          // 渲染顺序，供 Shift 用
+let bmLastClickIndex  = -1;
+
+let _pendingName = '', _pendingUrl = '', _pendingPath = [];
+let _batchItems = [], _batchFolderName = '';
+
+const STATUS_ORDER = { error:0, pending:1, checking:1, changed:2, unchanged:3 };
+
+// ══════════════════════════════════
+// Utils
+// ══════════════════════════════════
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = type==='error' ? 'error show' : 'show';
+  clearTimeout(window._tt);
+  window._tt = setTimeout(() => el.classList.remove('show'), 3600);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '从未';
+  return new Date(iso).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function pathKey(fp) {
+  return (fp && fp.length) ? fp.join(' › ') : '未分类';
+}
+
+function statusBadge(status) {
+  const MAP = {
+    pending:  ['pending',  '待检查'],
+    checking: ['checking', '检查中…'],
+    changed:  ['changed',  '有更新！'],
+    unchanged:['unchanged','无变化'],
+    error:    ['error',    '出错'],
+  };
+  const [cls, label] = MAP[status] || MAP.pending;
+  return `<span class="badge badge-${cls}"><span class="badge-dot"></span>${label}</span>`;
+}
+
+// Collect all URL nodes under a tree node
+function collectUrls(node) {
+  if (!node) return [];
+  if (node.type === 'url') return [node];
+  return (node.children || []).flatMap(collectUrls);
+}
+
+// ══════════════════════════════════
+// Bookmarks
+// ══════════════════════════════════
+async function loadBookmarks() {
+  const tree = document.getElementById('bookmarks-tree');
+  tree.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="width:70%;opacity:.6"></div>';
+  try {
+    const res = await fetch('/api/bookmarks');
+    if (!res.ok) {
+      tree.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">后端返回错误 ${res.status}</div></div>`;
+      return;
+    }
+    const data = await res.json();
+    if (data.error) {
+      tree.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">${esc(data.error)}</div></div>`;
+      return;
+    }
+    const bookmarks = data.bookmarks || [];
+    allBookmarks = [];
+    bmRenderedOrder = [];
+    tree.innerHTML = '';
+    bookmarks.forEach(node => tree.appendChild(renderNode(node, 0)));
+    document.getElementById('bm-count').textContent = allBookmarks.length;
+    markMonitored();
+  } catch(e) {
+    console.error('[书签] 加载失败:', e);
+    tree.innerHTML = `<div class="empty"><div class="empty-icon">❌</div><div class="empty-title">无法连接后端，请确认 app.py 正在运行</div></div>`;
+  }
+}
+
+function markMonitored() {
+  document.querySelectorAll('.bookmark-item').forEach(el => {
+    el.classList.toggle('in-monitor', monitoredUrls.has(el.dataset.url));
+  });
+}
+
+function renderNode(node, depth) {
+  if (depth === undefined) depth = 0;
+  if (node.type === 'url') {
+    allBookmarks.push(node);
+    return renderBookmarkItem(node);
+  }
+  if (node.type === 'folder') {
+    const urlDesc = collectUrls(node);
+    const wrap  = document.createElement('div');
+    wrap.className = 'tree-folder';
+
+    const label = document.createElement('div');
+    // 顶层文件夹（书签栏/其他/同步）默认展开
+    const initOpen = depth === 0;
+    label.className = 'folder-label' + (initOpen ? ' open' : '');
+
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    caret.textContent = '▶';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = '📁 ' + node.name;
+    label.appendChild(caret);
+    label.appendChild(nameSpan);
+
+    if (urlDesc.length > 0) {
+      const batchBtn = document.createElement('button');
+      batchBtn.className = 'folder-batch-btn';
+      batchBtn.textContent = `⊞ 批量添加 (${urlDesc.length})`;
+      batchBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openBatchModal(urlDesc, node.name);
+      });
+      label.appendChild(batchBtn);
+    }
+
+    const kids = document.createElement('div');
+    kids.className = 'folder-children' + (initOpen ? ' open' : '');
+    (node.children || []).forEach(c => kids.appendChild(renderNode(c, depth + 1)));
+
+    label.addEventListener('click', (e) => {
+      if (e.target.classList.contains('folder-batch-btn')) return;
+      label.classList.toggle('open');
+      kids.classList.toggle('open');
+    });
+
+    wrap.appendChild(label);
+    wrap.appendChild(kids);
+    return wrap;
+  }
+  return document.createDocumentFragment();
+}
+
+function renderBookmarkItem(bm) {
+  const myIndex = bmRenderedOrder.length;
+  bmRenderedOrder.push(bm.url);
+
+  const div = document.createElement('div');
+  div.className = 'bookmark-item';
+  div.dataset.name = bm.name;
+  div.dataset.url  = bm.url;
+  if (bmSelectedItems.has(bm.url)) div.classList.add('bm-selected');
+  const domain = (() => { try { return new URL(bm.url).hostname; } catch { return ''; } })();
+
+  // 复选框（仅选择模式显示）
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'bm-checkbox';
+  cb.checked = bmSelectedItems.has(bm.url);
+  cb.addEventListener('mousedown', e => { cb._shift = e.shiftKey; });
+  cb.addEventListener('change', e => {
+    e.stopPropagation();
+    bmToggleItem(bm, cb.checked, div, cb, myIndex, cb._shift || false);
+    cb._shift = false;
+  });
+
+  const favicon = document.createElement('img');
+  favicon.className = 'bookmark-favicon';
+  favicon.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+  favicon.onerror = () => { favicon.style.opacity = 0; };
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'bookmark-name';
+  nameSpan.title = bm.url;
+  nameSpan.textContent = bm.name;
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'add-btn';
+  addBtn.textContent = '＋';
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openModal(bm.name, bm.url, bm.folder_path || []);
+  });
+
+  // 点击整行切换（选择模式下）
+  div.addEventListener('click', e => {
+    if (!bmSelectMode) return;
+    if (e.target === addBtn || e.target === cb) return;
+    if (e.shiftKey) window.getSelection()?.removeAllRanges();
+    bmToggleItem(bm, !cb.checked, div, cb, myIndex, e.shiftKey);
+  });
+
+  div.appendChild(cb);
+  div.appendChild(favicon);
+  div.appendChild(nameSpan);
+  div.appendChild(addBtn);
+  return div;
+}
+
+function filterBookmarks() {
+  const q = document.getElementById('bm-search').value.toLowerCase();
+  document.querySelectorAll('.bookmark-item').forEach(el => {
+    const show = !q || el.dataset.name.toLowerCase().includes(q) || el.dataset.url.toLowerCase().includes(q);
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+// ══════════════════════════════════
+// Single Add
+// ══════════════════════════════════
+function openModal(name, url, path) {
+  _pendingName = name; _pendingUrl = url; _pendingPath = path || [];
+  document.getElementById('modal-url').textContent = url;
+  document.getElementById('modal-selector').value  = '';
+  document.getElementById('modal').classList.add('open');
+  setTimeout(() => document.getElementById('modal-selector').focus(), 80);
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+document.getElementById('modal').addEventListener('click', e => { if(e.target===document.getElementById('modal')) closeModal(); });
+document.getElementById('modal-selector').addEventListener('keydown', e => { if(e.key==='Enter') confirmAdd(); if(e.key==='Escape') closeModal(); });
+
+async function confirmAdd() {
+  const selector = document.getElementById('modal-selector').value.trim();
+  try {
+    const res = await fetch('/api/monitors', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name:_pendingName, url:_pendingUrl, selector, folder_path:_pendingPath })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error||'添加失败','error'); return; }
+    closeModal();
+    toast(`✅ 已添加：${_pendingName}`);
+    await loadMonitors();
+    markMonitored();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ══════════════════════════════════
+// Batch Add
+// ══════════════════════════════════
+function openBatchModal(items, folderName) {
+  _batchItems = items;
+  _batchFolderName = folderName;
+
+  const newItems = items.filter(it => !monitoredUrls.has(it.url));
+  const dupItems = items.filter(it =>  monitoredUrls.has(it.url));
+
+  document.getElementById('batch-desc').innerHTML =
+    `文件夹：<strong style="color:var(--text)">${esc(folderName)}</strong> &nbsp;·&nbsp; 共 ${items.length} 个书签（含子文件夹）`;
+  document.getElementById('batch-selector').value = '';
+  document.getElementById('batch-new-count').textContent = `${newItems.length} 个新增`;
+  document.getElementById('batch-dup-count').textContent = dupItems.length ? `· ${dupItems.length} 个已跳过` : '';
+
+  document.getElementById('batch-preview').innerHTML = items.map(it => {
+    const dup = monitoredUrls.has(it.url);
+    const pathStr = it.folder_path && it.folder_path.length > 1
+      ? `<span style="color:var(--muted);margin-left:6px;font-size:9px">${esc(it.folder_path.slice(1).join(' › '))}</span>` : '';
+    return `<div class="batch-row ${dup?'skip':''}">
+      <span class="batch-name">${esc(it.name)}${pathStr}</span>
+      <span class="batch-status ${dup?'dup-item':'new-item'}">${dup?'已存在':'新增'}</span>
+    </div>`;
+  }).join('');
+
+  const btn = document.getElementById('batch-confirm-btn');
+  if (newItems.length === 0) {
+    btn.disabled = true; btn.textContent = '全部已添加';
+  } else {
+    btn.disabled = false; btn.textContent = `批量添加 ${newItems.length} 个`;
+  }
+
+  document.getElementById('batch-modal').classList.add('open');
+  setTimeout(() => document.getElementById('batch-selector').focus(), 80);
+}
+function closeBatchModal() { document.getElementById('batch-modal').classList.remove('open'); }
+document.getElementById('batch-modal').addEventListener('click', e => { if(e.target===document.getElementById('batch-modal')) closeBatchModal(); });
+
+async function confirmBatch() {
+  const selector = document.getElementById('batch-selector').value.trim();
+  const newItems  = _batchItems.filter(it => !monitoredUrls.has(it.url));
+  if (!newItems.length) { closeBatchModal(); return; }
+
+  const btn = document.getElementById('batch-confirm-btn');
+  btn.disabled = true; btn.textContent = '添加中…';
+
+  try {
+    const res = await fetch('/api/monitors/batch', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items: newItems, selector })
+    });
+    const data = await res.json();
+    closeBatchModal();
+    toast(`✅ 成功添加 ${data.added} 个，跳过 ${data.skipped} 个`);
+    await loadMonitors();
+    markMonitored();
+  } catch(e) {
+    toast(e.message,'error');
+    btn.disabled = false; btn.textContent = `批量添加`;
+  }
+}
+
+// ══════════════════════════════════
+// Monitors — path-grouped rendering
+// ══════════════════════════════════
+async function loadMonitors() {
+  const res  = await fetch('/api/monitors');
+  const data = await res.json();
+  monitors      = data.monitors || [];
+  monitoredUrls = new Set(monitors.map(m => m.url));
+  renderMonitors();
+}
+
+function renderMonitors() {
+  const list = document.getElementById('monitors-list');
+  document.getElementById('mon-count').textContent = monitors.length;
+  updateSummary(monitors);
+
+  // 每次渲染重置卡片顺序列表（供 Shift 范围选取用）
+  renderedCardOrder = [];
+  lastClickedIndex  = -1;
+
+  if (!monitors.length) {
+    list.innerHTML = `<div class="empty"><div class="empty-icon">📡</div><div class="empty-title">暂无监控项</div><div class="empty-desc">在左侧书签中点击「＋」或文件夹「⊞ 批量添加」</div></div>`;
+    return;
+  }
+
+  // Group by path key
+  const groupMap = new Map();
+  monitors.forEach(m => {
+    const k = pathKey(m.folder_path);
+    if (!groupMap.has(k)) groupMap.set(k, []);
+    groupMap.get(k).push(m);
+  });
+
+  // Sort groups: groups with "changed" items first
+  const sorted = [...groupMap.entries()].sort(([,a],[,b]) => {
+    const wa = Math.min(...a.map(m => STATUS_ORDER[m.status] ?? 9));
+    const wb = Math.min(...b.map(m => STATUS_ORDER[m.status] ?? 9));
+    return wa - wb;
+  });
+
+  list.innerHTML = '';
+  sorted.forEach(([key, items]) => list.appendChild(renderGroup(key, items)));
+  // 保持选择模式 class
+  list.classList.toggle('select-mode', selectMode);
+}
+
+function renderGroup(key, items) {
+  const wrap = document.createElement('div');
+  wrap.className = 'path-group';
+
+  const hasChanged = items.some(m => m.status === 'changed');
+  const crumbHtml  = key.split(' › ')
+    .map(p => `<span>${esc(p)}</span>`)
+    .join(`<span class="path-crumb-sep"> › </span>`);
+
+  const header = document.createElement('div');
+  header.className = 'path-group-header open';
+
+  // 「全选本组」按钮
+  const groupSelBtn = document.createElement('button');
+  groupSelBtn.className = 'group-select-all';
+  groupSelBtn.textContent = '全选本组';
+  groupSelBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const groupIds = items.map(m => m.id);
+    const allSelected = groupIds.every(id => selectedIds.has(id));
+    groupIds.forEach(id => allSelected ? selectedIds.delete(id) : selectedIds.add(id));
+    groupSelBtn.textContent = allSelected ? '全选本组' : '取消全选';
+    refreshSelectionUI();
+  });
+
+  header.innerHTML = `
+    <span class="pg-caret">▶</span>
+    <span style="color:${hasChanged ? 'var(--red)' : 'var(--text2)'}">${crumbHtml}</span>
+    <span class="pg-count">${items.length}</span>`;
+  header.appendChild(groupSelBtn);
+
+  header.addEventListener('click', (e) => {
+    if (e.target === groupSelBtn) return;
+    header.classList.toggle('open');
+    body.classList.toggle('open');
+  });
+
+  const body = document.createElement('div');
+  body.className = 'path-group-body open';
+
+  items.slice()
+    .sort((a,b) => (STATUS_ORDER[a.status]??9) - (STATUS_ORDER[b.status]??9))
+    .forEach(m => body.appendChild(renderCard(m)));
+
+  wrap.appendChild(header);
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// 渲染顺序列表，供 Shift 范围选取使用
+let renderedCardOrder = [];  // 按渲染顺序存储 monitor id
+let lastClickedIndex  = -1;  // 上次点击的索引
+
+function renderCard(m) {
+  const card = document.createElement('div');
+  card.className = `monitor-card status-${m.status}`;
+  card.id = `card-${m.id}`;
+  card.dataset.id = m.id;
+  // 记录本卡片在渲染顺序中的索引（append 前先 push）
+  const myIndex = renderedCardOrder.length;
+  renderedCardOrder.push(m.id);
+  if (selectedIds.has(m.id)) card.classList.add('selected');
+
+  // 复选框
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'card-checkbox';
+  cb.checked = selectedIds.has(m.id);
+
+  // mousedown 捕捉 shiftKey（change 事件触发时 shiftKey 已丢失）
+  cb.addEventListener('mousedown', (e) => { cb._shiftKey = e.shiftKey; });
+  cb.addEventListener('change', (e) => {
+    e.stopPropagation();
+    toggleCardSelect(m.id, cb.checked, card, cb, myIndex, cb._shiftKey || false);
+    cb._shiftKey = false;
+  });
+
+  // 点击整张卡片（选择模式下）
+  card.addEventListener('click', (e) => {
+    if (!selectMode) return;
+    if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON') return;
+    if (e.target === cb) return;  // checkbox 自己的 change 已处理
+    // Shift 点击时阻止浏览器文字选中
+    if (e.shiftKey) window.getSelection()?.removeAllRanges();
+    const newChecked = !cb.checked;
+    toggleCardSelect(m.id, newChecked, card, cb, myIndex, e.shiftKey);
+  });
+
+  const resetBtn = m.status === 'changed'
+    ? `<button class="btn-sm success" onclick="resetMonitor('${m.id}')">✓ 已读</button>
+       <button class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="event.stopPropagation();openDiffModal('${m.id}')">⊕ 查看变更</button>`
+    : '';
+  const errorDetail = (m.status === 'error' && m.last_text_preview)
+    ? `<div class="error-detail">⚠️ ${esc(m.last_text_preview)}</div>` : '';
+
+  const content = document.createElement('div');
+  content.innerHTML = `
+    <div class="card-top">
+      <div class="card-name">${esc(m.name)}</div>
+      <div class="card-actions">${statusBadge(m.status)}${resetBtn}<button class="btn-sm" title="单独检查此项" onclick="event.stopPropagation();checkOne('${m.id}')">↻</button><button class="btn-sm" onclick="event.stopPropagation();openEditModal('${m.id}')">✏</button><button class="btn-sm danger" onclick="event.stopPropagation();deleteMonitor('${m.id}')">✕</button></div>
+    </div>
+    <a class="card-url" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a>
+    ${errorDetail}
+    <div class="card-meta">
+      ${m.selector ? `<span class="selector-tag">⌖ ${esc(m.selector)}</span>` : '<span style="opacity:.4">全文监控</span>'}
+      <span>检查：${fmtDate(m.last_checked)}</span>
+      ${m.status!=='error' && m.last_text_preview
+        ? `<span title="${esc(m.last_text_preview)}" style="cursor:help">预览 ℹ</span>` : ''}
+    </div>`;
+
+  card.appendChild(cb);
+  card.appendChild(content);
+  return card;
+}
+
+function updateSummary(ms) {
+  const c = {changed:0,unchanged:0,pending:0,error:0};
+  ms.forEach(m => { if(c[m.status]!==undefined) c[m.status]++; else c.pending++; });
+  document.getElementById('s-changed').textContent   = `${c.changed} 有更新`;
+  document.getElementById('s-unchanged').textContent = `${c.unchanged} 无变化`;
+  document.getElementById('s-pending').textContent   = `${c.pending} 待检查`;
+  document.getElementById('s-error').textContent     = `${c.error} 出错`;
+}
+
+async function deleteMonitor(id) {
+  if (!confirm('确认删除该监控项？')) return;
+  await fetch(`/api/monitors/${id}`, {method:'DELETE'});
+  toast('已删除');
+  selectedIds.delete(id);
+  await loadMonitors(); markMonitored();
+}
+
+// ══════════════════════════════════
+// Edit Modal
+// ══════════════════════════════════
+let _editId = '';
+
+function openEditModal(id) {
+  const m = monitors.find(x => x.id === id);
+  if (!m) return;
+  _editId = id;
+  document.getElementById('edit-modal-url').textContent = m.url;
+  document.getElementById('edit-name').value     = m.name;
+  document.getElementById('edit-selector').value = m.selector || '';
+  document.getElementById('edit-modal').classList.add('open');
+  setTimeout(() => document.getElementById('edit-selector').focus(), 80);
+}
+function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); }
+document.getElementById('edit-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('edit-modal')) closeEditModal();
+});
+document.getElementById('edit-selector').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confirmEdit();
+  if (e.key === 'Escape') closeEditModal();
+});
+
+async function confirmEdit() {
+  const name     = document.getElementById('edit-name').value.trim();
+  const selector = document.getElementById('edit-selector').value.trim();
+  if (!name) { toast('名称不能为空', 'error'); return; }
+  try {
+    const res = await fetch(`/api/monitors/${_editId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, selector })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || '保存失败', 'error'); return; }
+    closeEditModal();
+    toast('✅ 已保存');
+    await loadMonitors();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ══════════════════════════════════
+// Selector Rules Modal
+// ══════════════════════════════════
+let _rules = {};
+
+async function openRulesModal() {
+  await loadRules();
+  document.getElementById('rules-modal').classList.add('open');
+}
+function closeRulesModal() { document.getElementById('rules-modal').classList.remove('open'); }
+document.getElementById('rules-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('rules-modal')) closeRulesModal();
+});
+
+// 域名框输入校验：自动去除 https:// 协议头，保留路径前缀
+function onRuleDomainInput(input) {
+  const val = input.value.trim();
+  const warn = document.getElementById('rule-domain-warn');
+  if (val.startsWith('http://') || val.startsWith('https://')) {
+    try {
+      const u = new URL(val);
+      // 保留 hostname + pathname（去末尾斜杠）
+      const pathKey = u.hostname + u.pathname.replace(/\/+$/, '');
+      input.value = pathKey;
+      warn.style.display = 'none';
+      // 把完整 URL 自动移入测试 URL 框
+      const testUrlInput = document.getElementById('rule-test-url');
+      if (!testUrlInput.value) testUrlInput.value = val;
+    } catch(e) {
+      warn.style.display = 'block';
+    }
+  } else {
+    warn.style.display = 'none';
+  }
+  // 更新匹配数量提示
+  const hint = document.getElementById('rule-match-hint');
+  if (!val || val.startsWith('http')) { hint.textContent = ''; return; }
+  const count = monitors.filter(m => {
+    try {
+      const h = new URL(m.url).hostname.toLowerCase();
+      return h === val || h.endsWith('.' + val);
+    } catch { return false; }
+  }).length;
+  hint.textContent = count ? `将匹配 ${count} 个已有监控项` : '暂无已有监控项匹配';
+  hint.style.color = count ? 'var(--accent)' : 'var(--muted)';
+}
+
+function testSelectorFromRule() {
+  const selector = document.getElementById('rule-selector').value.trim();
+  const testUrl  = document.getElementById('rule-test-url').value.trim();
+  const domain   = document.getElementById('rule-domain').value.trim();
+  const usePw    = document.getElementById('rule-use-playwright').checked;
+  const el       = document.getElementById('rule-test-result');
+  if (!testUrl) {
+    el.style.display = 'block';
+    el.innerHTML = '<div class="test-warn">⚠️ 请在「测试 URL」框中粘贴一个完整的页面地址（如 https://sehuatang.net/forum.php?...）</div>';
+    return;
+  }
+  testSelector(testUrl, selector, 'rule-test-result', '', usePw);
+}async function loadRules() {
+  const res  = await fetch('/api/selector-rules');
+  const data = await res.json();
+  _rules = data.rules || {};
+  renderRulesList();
+}
+
+function renderRulesList() {
+  const list = document.getElementById('rules-list');
+  const entries = Object.entries(_rules);
+  if (!entries.length) {
+    list.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px 0">暂无规则，添加后新书签将自动应用</div>`;
+    return;
+  }
+  list.innerHTML = '';
+  entries.forEach(([domain, rule]) => {
+    const selector   = typeof rule === 'object' ? (rule.selector || '') : rule;
+    const delay      = typeof rule === 'object' ? (rule.delay ?? 2) : 2;
+    const usePw      = typeof rule === 'object' ? !!rule.use_playwright : false;
+    const pwBadge    = usePw ? `<span style="color:var(--yellow);font-size:10px" title="使用 Playwright JS渲染">🌐</span>` : '';
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    row.innerHTML = `
+      <span class="rule-domain">${esc(domain)}</span>
+      <span class="rule-arrow">→</span>
+      <span class="rule-selector">${esc(selector) || '<span style="opacity:.4">全文</span>'}</span>
+      ${pwBadge}<span class="rule-delay" title="请求间隔">⏱ ${delay}s</span>
+      <div class="rule-actions">
+        <button class="btn-sm" title="批量应用到已有监控项" onclick="applyRule('${esc(domain)}','${esc(selector)}')">⚡ 应用</button>
+        <button class="btn-sm" title="编辑" onclick="editRuleInline('${esc(domain)}','${esc(selector)}',${delay},${usePw})">✏</button>
+        <button class="btn-sm danger" onclick="deleteRule('${esc(domain)}')">✕</button>
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+async function saveRule() {
+  const domain        = document.getElementById('rule-domain').value.trim().toLowerCase();
+  const selector      = document.getElementById('rule-selector').value.trim();
+  const delay         = parseInt(document.getElementById('rule-delay').value) || 2;
+  const use_playwright = document.getElementById('rule-use-playwright').checked;
+  if (!domain) { toast('域名不能为空', 'error'); return; }
+  const res  = await fetch('/api/selector-rules', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ domain, selector, delay, use_playwright })
+  });
+  const data = await res.json();
+  _rules = data.rules;
+  renderRulesList();
+  document.getElementById('rule-domain').value   = '';
+  document.getElementById('rule-selector').value = '';
+  document.getElementById('rule-delay').value    = '2';
+  document.getElementById('rule-use-playwright').checked = false;
+  document.getElementById('rule-match-hint').textContent = '';
+  toast(`✅ 规则已保存：${domain}（间隔 ${delay}s${use_playwright ? '，JS渲染' : ''}）`);
+}
+
+function editRuleInline(domain, selector, delay, usePw=false) {
+  document.getElementById('rule-domain').value   = domain;
+  document.getElementById('rule-selector').value = selector;
+  document.getElementById('rule-delay').value    = delay ?? 2;
+  document.getElementById('rule-use-playwright').checked = !!usePw;
+  // 自动填入一个匹配该域名的监控项 URL 作为测试地址
+  const matched = monitors.find(m => {
+    try {
+      const h = new URL(m.url).hostname.toLowerCase();
+      return h === domain || h.endsWith('.' + domain);
+    } catch { return false; }
+  });
+  if (matched) document.getElementById('rule-test-url').value = matched.url;
+  document.getElementById('rule-selector').focus();
+}
+
+async function deleteRule(domain) {
+  if (!confirm(`删除域名规则「${domain}」？已添加的监控项不受影响。`)) return;
+  const res = await fetch(`/api/selector-rules/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+  const data = await res.json();
+  _rules = data.rules;
+  renderRulesList();
+  toast('已删除规则');
+}
+
+async function applyRule(domain, selector) {
+  const res  = await fetch('/api/selector-rules/batch-apply', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ domain, selector })
+  });
+  const data = await res.json();
+  if (!res.ok) { toast(data.error || '应用失败', 'error'); return; }
+  toast(`⚡ 已更新 ${data.updated} 个监控项`);
+  await loadMonitors();
+}
+
+async function resetMonitor(id) {
+  await fetch(`/api/monitors/${id}/reset`, {method:'POST'});
+  await loadMonitors();
+  toast('✅ 已标记为已读');
+}
+
+// ══════════════════════════════════
+// Diff Modal
+// ══════════════════════════════════
+let _diffMonitorId = '';
+
+async function openDiffModal(id) {
+  _diffMonitorId = id;
+  const body = document.getElementById('diff-body');
+  body.innerHTML = '<div class="diff-empty">加载中…</div>';
+  document.getElementById('diff-modal').classList.add('open');
+
+  try {
+    const res  = await fetch(`/api/monitors/${id}/diff`);
+    const data = await res.json();
+    if (!res.ok) { body.innerHTML = `<div class="diff-empty">⚠️ ${esc(data.error)}</div>`; return; }
+
+    document.getElementById('diff-meta').textContent =
+      `${data.name}  ·  检查时间：${fmtDate(data.checked)}`;
+    document.getElementById('diff-open-link').href = data.url;
+
+    const diff = data.diff || [];
+    if (!diff.length) {
+      body.innerHTML = '<div class="diff-empty">暂无差异数据，请重新检查一次</div>';
+      return;
+    }
+
+    body.innerHTML = '';
+    diff.forEach(seg => {
+      const div = document.createElement('div');
+      if (seg.type === 'insert') {
+        div.className = 'diff-seg ins';
+        div.innerHTML = `<span class="diff-prefix">＋</span>${esc(seg.text)}`;
+      } else if (seg.type === 'delete') {
+        div.className = 'diff-seg del';
+        div.innerHTML = `<span class="diff-prefix">－</span>${esc(seg.text)}`;
+      } else if (seg.type === 'fold') {
+        div.className = 'diff-seg fold';
+        div.textContent = seg.text;
+      } else {
+        div.className = 'diff-seg eq';
+        div.innerHTML = `<span class="diff-prefix"> </span>${esc(seg.text)}`;
+      }
+      body.appendChild(div);
+    });
+  } catch(e) {
+    body.innerHTML = `<div class="diff-empty">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+function closeDiffModal() {
+  document.getElementById('diff-modal').classList.remove('open');
+}
+document.getElementById('diff-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('diff-modal')) closeDiffModal();
+});
+
+async function markReadFromDiff() {
+  if (!_diffMonitorId) return;
+  await fetch(`/api/monitors/${_diffMonitorId}/reset`, {method:'POST'});
+  closeDiffModal();
+  toast('✅ 已标记为已读');
+  await loadMonitors();
+}
+
+async function resetAllBaselines() {
+  if (!confirm('清空所有监控项的历史基准？下次检查将重新采集内容，不会产生误报。')) return;
+  const res  = await fetch('/api/monitors/reset-all', {method:'POST'});
+  const data = await res.json();
+  toast(`↺ 已重置 ${data.reset} 个监控项的基准`);
+  await loadMonitors();
+}
+
+// ══════════════════════════════════
+// Selector Tester
+// ══════════════════════════════════
+async function testSelector(url, selector, resultElId, searchText='', forcePw=false) {
+  const el = document.getElementById(resultElId);
+  if (!url) { el.style.display='block'; el.innerHTML='<div class="test-err">请先填写 URL / 域名</div>'; return; }
+  if (!selector && !searchText) { el.style.display='block'; el.innerHTML='<div class="test-warn">选择器为空，将监控整个页面正文</div>'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<div style="color:var(--muted)">${forcePw ? '🌐 启动浏览器渲染，请稍候（约10-30秒）…' : '正在抓取页面，请稍候…'}</div>`;
+
+  function renderDbg(debugArr) {
+    return (debugArr||[]).map(d => {
+      if (d.startsWith('页面所有 class')) {
+        const header = d.substring(0, d.indexOf('：') + 1);
+        const classes = d.substring(d.indexOf('：') + 1).split(', ');
+        return `<div style="color:var(--muted);font-size:10px;margin-top:4px">${esc(header)}</div>`
+          + `<div style="color:var(--muted);font-size:10px;line-height:1.8;word-break:break-all">`
+          + classes.map(c => `<span style="margin-right:8px">${esc(c)}</span>`).join('') + `</div>`;
+      }
+      return `<div style="color:var(--muted);font-size:10px;margin-top:2px">${esc(d)}</div>`;
+    }).join('');
+  }
+
+  try {
+    const res = await fetch('/api/test-selector', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ url, selector, search_text: searchText, force_playwright: forcePw })
+    });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) {
+      el.innerHTML = `<div class="test-err">❌ 服务器错误（${res.status}）<br><pre style="font-size:9px;white-space:pre-wrap;max-height:200px;overflow:auto;background:#1a1a1a;padding:8px;border-radius:4px">${esc(text.replace(/<[^>]+>/g,'').slice(0,800))}</pre></div>`;
+      return;
+    }
+    if (!res.ok || data.error) {
+      el.innerHTML = `<div class="test-err">❌ ${esc(data.error || '请求失败')}</div>`;
+      return;
+    }
+    const dbg = renderDbg(data.debug);
+
+    // 文本搜索结果
+    if (data.search_results !== undefined) {
+      if (!data.search_results.length) {
+        el.innerHTML = `<div class="test-warn">⚠️ ${esc(data.hint || '未找到匹配元素')}</div>${dbg}`;
+        return;
+      }
+      const rows = data.search_results.map(r =>
+        `<div class="test-line" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="flex:1;min-width:0">
+            <span style="color:var(--accent);font-family:var(--font-mono);font-size:11px">${esc(r.selector)}</span><br>
+            <span style="color:var(--text2);font-size:10px">${esc(r.text)}</span>
+          </div>
+          <button class="btn-sm" style="flex-shrink:0;border-color:var(--accent);color:var(--accent);padding:1px 6px;font-size:10px"
+            onclick="applySearchSelector(this,'${esc(r.simple)}','${resultElId}')">使用 ${esc(r.simple)}</button>
+        </div>`
+      ).join('');
+      el.innerHTML = `<div class="test-ok">🔍 找到 ${data.search_results.length} 个匹配元素</div>${rows}${dbg}`;
+      return;
+    }
+
+    if (data.selector_ok) {
+      const lines = data.preview || [];
+      const note  = data.note ? `<div style="color:var(--accent);font-size:11px;margin-bottom:4px">${esc(data.note)}</div>` : '';
+      el.innerHTML = `<div class="test-ok">✅ 匹配 ${data.matched} 个元素，提取 ${data.lines} 行</div>${note}${dbg}`
+        + lines.map(l => `<div class="test-line">${esc(l)}</div>`).join('');
+    } else {
+      const hint = data.hint || '未匹配';
+      const applyBtn = data.loose_selector
+        ? `<button class="btn-sm" style="margin-left:8px;border-color:var(--accent);color:var(--accent)" onclick="applySuggestedSelector(this,'${esc(data.loose_selector)}')">← 使用此选择器</button>`
+        : '';
+      const previews = (data.preview || []).map(l => `<div class="test-line">${esc(l)}</div>`).join('');
+      el.innerHTML = `<div class="test-warn">⚠️ ${esc(hint)}${applyBtn}</div>${dbg}${previews}`;
+    }
+  } catch(e) {
+    el.innerHTML = `<div class="test-err">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+async function debugRender(source) {
+  const url = source === 'rule'
+    ? (document.getElementById('rule-test-url').value.trim() || 'https://' + document.getElementById('rule-domain').value.trim())
+    : (monitors.find(x => x.id === _editId) || {}).url || '';
+  const resultId = source === 'rule' ? 'rule-test-result' : 'edit-test-result';
+  const el = document.getElementById(resultId);
+  el.style.display = 'block';
+  el.innerHTML = '<div style="color:var(--muted)">🔬 启动 Playwright 渲染页面，请稍候（约15秒）…</div>';
+  try {
+    const res  = await fetch('/api/debug-render', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ url })
+    });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) {
+      // 返回了 HTML，说明 Flask 异常了，截取错误信息
+      const match = text.match(/<title>(.*?)<\/title>/i);
+      const errLine = text.match(/pywrap.*?\n.*?\n/s);
+      el.innerHTML = `<div class="test-err">❌ 服务器返回了非 JSON 响应（${res.status}）<br><pre style="font-size:9px;white-space:pre-wrap;max-height:150px;overflow:auto">${esc(text.slice(0,500))}</pre></div>`;
+      return;
+    }
+    if (data.error) { el.innerHTML = `<div class="test-err">❌ ${esc(data.error)}</div>`; return; }
+    el.innerHTML = `<div class="test-ok">✅ 渲染完成（${data.size} 字节）</div>`
+      + `<div style="font-size:11px;color:var(--muted);margin-top:4px">在新标签打开渲染后的页面，用 DevTools（F12）查找正确选择器：</div>`
+      + `<a href="${esc(data.url)}" target="_blank" style="color:var(--accent);font-size:12px;word-break:break-all">${esc('http://localhost:5000' + data.url)}</a>`;
+  } catch(e) {
+    el.innerHTML = `<div class="test-err">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+function applySearchSelector(btn, selector, resultElId) {
+  const modal = btn.closest('.modal');
+  const selectorInput = modal.querySelector('#edit-selector') || modal.querySelector('#rule-selector');
+  if (selectorInput) {
+    selectorInput.value = selector;
+    if (selectorInput.id === 'edit-selector') testSelectorFromEdit();
+    else testSelectorFromRule();
+  }
+}
+
+function searchTextFromEdit(force=false) {
+  const m = monitors.find(x => x.id === _editId);
+  const url = m ? m.url : '';
+  const searchText = document.getElementById('edit-search-text').value.trim();
+  if (!searchText) return;
+  testSelector(url, '', 'edit-test-result', searchText, force);
+}
+
+function searchTextFromRule(force=false) {
+  const testUrl = document.getElementById('rule-test-url').value.trim();
+  const domain  = document.getElementById('rule-domain').value.trim();
+  const url = testUrl || (domain ? 'https://' + domain : '');
+  const searchText = document.getElementById('rule-search-text').value.trim();
+  if (!searchText) return;
+  testSelector(url, '', 'rule-test-result', searchText, force);
+}
+
+function testSelectorFromEdit() {
+  const m = monitors.find(x => x.id === _editId);
+  const url = m ? m.url : '';
+  const selector = document.getElementById('edit-selector').value.trim();
+  testSelector(url, selector, 'edit-test-result');
+}
+
+function applySuggestedSelector(btn, suggested) {
+  // 找到最近的 modal，填入对应的选择器输入框
+  const modal = btn.closest('.modal');
+  const selectorInput = modal.querySelector('#edit-selector') || modal.querySelector('#rule-selector');
+  if (selectorInput) {
+    selectorInput.value = suggested;
+    // 自动重新测试
+    if (selectorInput.id === 'edit-selector') testSelectorFromEdit();
+    else testSelectorFromRule();
+  }
+}
+
+// ══════════════════════════════════
+// Bookmark Select Mode
+// ══════════════════════════════════
+function toggleBmSelectMode() {
+  bmSelectMode = !bmSelectMode;
+  if (!bmSelectMode) bmSelectedItems.clear();
+
+  const btn = document.getElementById('bm-select-btn');
+  btn.classList.toggle('active', bmSelectMode);
+  btn.textContent = bmSelectMode ? '✕ 退出选择' : '☑ 选择';
+
+  const tree = document.getElementById('bookmarks-tree');
+  tree.classList.toggle('bm-select-mode', bmSelectMode);
+
+  // 同步所有复选框显示状态和已选状态
+  document.querySelectorAll('.bookmark-item').forEach(el => {
+    const cb = el.querySelector('.bm-checkbox');
+    if (cb) {
+      cb.checked = bmSelectedItems.has(el.dataset.url);
+      el.classList.toggle('bm-selected', cb.checked);
+    }
+  });
+
+  bmRefreshBar();
+}
+
+function bmToggleItem(bm, checked, div, cb, index, shift) {
+  if (shift && bmLastClickIndex >= 0 && bmLastClickIndex !== index) {
+    const lo = Math.min(bmLastClickIndex, index);
+    const hi = Math.max(bmLastClickIndex, index);
+    for (let i = lo; i <= hi; i++) {
+      const url = bmRenderedOrder[i];
+      if (!url) continue;
+      const bmObj = allBookmarks.find(b => b.url === url);
+      if (!bmObj) continue;
+      if (checked) bmSelectedItems.set(url, bmObj); else bmSelectedItems.delete(url);
+      const el = document.querySelector(`.bookmark-item[data-url="${CSS.escape(url)}"]`);
+      if (el) {
+        el.classList.toggle('bm-selected', checked);
+        const elCb = el.querySelector('.bm-checkbox');
+        if (elCb) elCb.checked = checked;
+      }
+    }
+  } else {
+    if (checked) bmSelectedItems.set(bm.url, bm); else bmSelectedItems.delete(bm.url);
+    div.classList.toggle('bm-selected', checked);
+    cb.checked = checked;
+  }
+  bmLastClickIndex = index;
+  bmRefreshBar();
+}
+
+function bmRefreshBar() {
+  const count = bmSelectedItems.size;
+  document.getElementById('bm-float-count').textContent = count;
+  document.getElementById('bm-float-bar').classList.toggle('show', bmSelectMode && count > 0);
+}
+
+function bmSelectAll() {
+  allBookmarks.forEach(bm => bmSelectedItems.set(bm.url, bm));
+  bmLastClickIndex = -1;
+  document.querySelectorAll('.bookmark-item').forEach(el => {
+    el.classList.add('bm-selected');
+    const cb = el.querySelector('.bm-checkbox');
+    if (cb) cb.checked = true;
+  });
+  bmRefreshBar();
+}
+
+function bmSelectNone() {
+  bmSelectedItems.clear();
+  bmLastClickIndex = -1;
+  document.querySelectorAll('.bookmark-item').forEach(el => {
+    el.classList.remove('bm-selected');
+    const cb = el.querySelector('.bm-checkbox');
+    if (cb) cb.checked = false;
+  });
+  bmRefreshBar();
+}
+
+// 复用批量添加弹窗，把选中书签作为 items 传入
+function openBmBatchAddModal() {
+  const items = [...bmSelectedItems.values()];
+  if (!items.length) return;
+  openBatchModal(items, `已选 ${items.length} 个书签`);
+}
+
+// ══════════════════════════════════
+// Select mode
+// ══════════════════════════════════
+
+/**
+ * 切换单张卡片的选中状态，支持 Shift 范围选取。
+ * @param {string} id        - monitor id
+ * @param {boolean} checked  - 目标状态（true=选中）
+ * @param {Element} card     - 卡片 DOM
+ * @param {Element} cb       - 复选框 DOM
+ * @param {number}  index    - 本卡片在 renderedCardOrder 中的索引
+ * @param {boolean} shift    - 是否按住 Shift
+ */
+function toggleCardSelect(id, checked, card, cb, index, shift) {
+  if (shift && lastClickedIndex >= 0 && lastClickedIndex !== index) {
+    // Shift 范围：选中 lastClickedIndex ↔ index 之间的所有卡片
+    const lo = Math.min(lastClickedIndex, index);
+    const hi = Math.max(lastClickedIndex, index);
+    for (let i = lo; i <= hi; i++) {
+      const rangeId = renderedCardOrder[i];
+      if (!rangeId) continue;
+      // 范围内统一设为与当前点击相同的 checked 状态
+      if (checked) selectedIds.add(rangeId); else selectedIds.delete(rangeId);
+      const rangeCard = document.getElementById(`card-${rangeId}`);
+      if (rangeCard) {
+        rangeCard.classList.toggle('selected', checked);
+        const rangeCb = rangeCard.querySelector('.card-checkbox');
+        if (rangeCb) rangeCb.checked = checked;
+      }
+    }
+  } else {
+    // 普通单选切换
+    if (checked) selectedIds.add(id); else selectedIds.delete(id);
+    card.classList.toggle('selected', checked);
+    cb.checked = checked;
+  }
+
+  lastClickedIndex = index;
+  refreshSelectionUI();
+}
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  if (!selectMode) {
+    selectedIds.clear();
+  }
+  // 切换 panel 的 class，CSS 用 .select-mode 控制复选框显示
+  const panel = document.querySelector('[style*="monitors"]');
+  const monitorsList = document.getElementById('monitors-list');
+  monitorsList.classList.toggle('select-mode', selectMode);
+
+  const btn = document.getElementById('select-mode-btn');
+  btn.classList.toggle('active', selectMode);
+  btn.textContent = selectMode ? '✕ 退出选择' : '☑ 选择';
+
+  refreshSelectionUI();
+  // 重新渲染以更新复选框状态
+  renderMonitors();
+}
+
+function refreshSelectionUI() {
+  const count = selectedIds.size;
+  document.getElementById('float-sel-count').textContent = count;
+  const bar = document.getElementById('float-bar');
+  bar.classList.toggle('show', selectMode && count > 0);
+}
+
+function selectAll() {
+  monitors.forEach(m => selectedIds.add(m.id));
+  lastClickedIndex = -1;
+  refreshSelectionUI();
+  document.querySelectorAll('.monitor-card').forEach(card => {
+    card.classList.add('selected');
+    const cb = card.querySelector('.card-checkbox');
+    if (cb) cb.checked = true;
+  });
+}
+
+function selectNone() {
+  selectedIds.clear();
+  lastClickedIndex = -1;
+  refreshSelectionUI();
+  document.querySelectorAll('.monitor-card').forEach(card => {
+    card.classList.remove('selected');
+    const cb = card.querySelector('.card-checkbox');
+    if (cb) cb.checked = false;
+  });
+}
+
+async function batchDelete() {
+  const count = selectedIds.size;
+  if (!count) return;
+  if (!confirm(`确认删除选中的 ${count} 个监控项？此操作不可恢复。`)) return;
+
+  const ids = [...selectedIds];
+  try {
+    const res = await fetch('/api/monitors/batch-delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ids })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || '批量删除失败', 'error'); return; }
+
+    selectedIds.clear();
+    selectMode = false;
+    document.getElementById('select-mode-btn').classList.remove('active');
+    document.getElementById('select-mode-btn').textContent = '☑ 选择';
+    document.getElementById('float-bar').classList.remove('show');
+    document.getElementById('monitors-list').classList.remove('select-mode');
+
+    toast(`🗑 已删除 ${data.deleted} 个监控项`);
+    await loadMonitors();
+    markMonitored();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ══════════════════════════════════
+// Check All
+// ══════════════════════════════════
+async function checkOne(id) {
+  const card = document.querySelector(`.monitor-card[data-id="${id}"]`);
+  const m = monitors.find(x => x.id === id);
+  if (!m) return;
+  // 立即显示检查中状态
+  m.status = 'checking';
+  renderMonitors();
+  try {
+    const res  = await fetch(`/api/monitors/${id}/check`, {method: 'POST'});
+    const data = await res.json();
+    if (data.error) { toast(data.error, 'error'); return; }
+    const idx = monitors.findIndex(x => x.id === id);
+    if (idx !== -1) monitors[idx] = data.monitor;
+    renderMonitors();
+    const s = data.monitor.status;
+    if (s === 'changed') toast('🔴 检测到更新！');
+    else if (s === 'unchanged') toast('✅ 无变化');
+    else toast('⚠️ 检查出错', 'error');
+  } catch(e) {
+    toast('检查失败：' + e.message, 'error');
+  }
+}
+
+async function checkAll() {
+  if (!monitors.length) { toast('请先添加监控项','error'); return; }
+  const btn       = document.getElementById('check-btn');
+  const progWrap  = document.getElementById('progress-wrap');
+  const progFill  = document.getElementById('progress-fill');
+  const progText  = document.getElementById('progress-text');
+  const total     = monitors.length;
+
+  btn.disabled = true; btn.classList.add('loading');
+  progWrap.classList.add('active');
+  progFill.style.width = '0%';
+  progText.textContent = `0 / ${total} 检查中…`;
+
+  monitors.forEach(m => m.status = 'checking');
+  renderMonitors();
+
+  let pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/check/progress');
+      const d = await r.json();
+      const pct = total > 0 ? Math.round(d.done / total * 100) : 0;
+      progFill.style.width = pct + '%';
+      progText.textContent = `${d.done} / ${total}  🔴${d.changed}  ⚠️${d.errors}`;
+
+      if (d.done > 0) {
+        const mr  = await fetch('/api/monitors');
+        const md  = await mr.json();
+        const newList = md.monitors || md || [];
+
+        // 检测是否有状态变化
+        const statusMap = new Map(monitors.map(m => [m.id, m.status]));
+        let hasChange = false;
+        newList.forEach(m => {
+          if (statusMap.get(m.id) !== m.status) hasChange = true;
+        });
+
+        monitors = newList;
+
+        if (hasChange) {
+          // 有状态变化：整体重排（带动画过渡）
+          renderMonitors();
+          // 对每张变为 changed/error 的卡片加高亮闪烁
+          newList.forEach(m => {
+            if (m.status === 'changed' || m.status === 'error') {
+              const card = document.querySelector(`[data-id="${m.id}"]`);
+              if (card) {
+                card.classList.remove('status-flash');
+                void card.offsetWidth; // reflow
+                card.classList.add('status-flash');
+              }
+            }
+          });
+        } else {
+          // 无状态变化：只更新进度文字，不重排
+          newList.forEach(m => {
+            const card = document.querySelector(`[data-id="${m.id}"]`);
+            if (card) {
+              // 更新 checking 旋转状态
+              const badge = card.querySelector('.status-badge');
+              if (badge && m.status === 'checking') badge.textContent = '⟳ 检查中';
+            }
+          });
+        }
+      }
+    } catch(_) {}
+  }, 1500);
+
+  try {
+    const res  = await fetch('/api/check', {method:'POST'});
+    const data = await res.json();
+    monitors = data.monitors || [];
+    renderMonitors();
+    const changed = monitors.filter(m => m.status==='changed').length;
+    const errors  = monitors.filter(m => m.status==='error').length;
+    document.getElementById('last-check-time').textContent = `上次：${new Date().toLocaleTimeString('zh-CN')}`;
+    progFill.style.width = '100%';
+    progText.textContent = `完成 ${total} 项  🔴 ${changed} 有更新  ⚠️ ${errors} 出错`;
+    toast(changed > 0 ? `🔴 发现 ${changed} 个页面有更新！` : '✅ 全部检查完成');
+    setTimeout(() => progWrap.classList.remove('active'), 4000);
+  } catch(e) {
+    toast('检查失败：'+e.message,'error');
+    progWrap.classList.remove('active');
+  } finally {
+    clearInterval(pollTimer);
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+// ══════════════════════════════════
+// Cookie
+// ══════════════════════════════════
+async function openCookieModal() {
+  document.getElementById('cookie-modal').classList.add('open');
+  document.getElementById('ck-domain').value = '';
+  document.getElementById('ck-value').value  = '';
+  await refreshCookieList();
+}
+function closeCookieModal() { document.getElementById('cookie-modal').classList.remove('open'); }
+document.getElementById('cookie-modal').addEventListener('click', e => { if(e.target===document.getElementById('cookie-modal')) closeCookieModal(); });
+
+async function refreshCookieList() {
+  const res  = await fetch('/api/cookies');
+  const data = await res.json();
+  const list = document.getElementById('ck-saved-list');
+  const entries = Object.entries(data.cookies || {});
+  if (!entries.length) { list.innerHTML = ''; return; }
+  list.innerHTML = `
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text2);margin-bottom:7px">已保存</div>
+    ${entries.map(([d,v]) => `
+      <div class="cookie-row">
+        <span class="cookie-domain">🔑 ${esc(d)}</span>
+        <span class="cookie-val">${esc(v)}</span>
+        <button class="btn-sm danger" onclick="deleteCookie('${esc(d)}')">✕</button>
+      </div>`).join('')}`;
+}
+
+async function saveCookie() {
+  const domain = document.getElementById('ck-domain').value.trim();
+  const cookie = document.getElementById('ck-value').value.trim();
+  if (!domain||!cookie) { toast('域名和 Cookie 不能为空','error'); return; }
+  const res = await fetch('/api/cookies', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({domain, cookie})
+  });
+  const data = await res.json();
+  if (!res.ok) { toast(data.error,'error'); return; }
+  toast(`✅ Cookie 已保存：${domain}`);
+  document.getElementById('ck-domain').value = '';
+  document.getElementById('ck-value').value  = '';
+  await refreshCookieList();
+}
+
+async function deleteCookie(domain) {
+  await fetch(`/api/cookies/${domain}`, {method:'DELETE'});
+  toast(`已删除 ${domain} 的 Cookie`);
+  await refreshCookieList();
+}
+
+// ══════════════════════════════════
+// Bookmark Sync
+// ══════════════════════════════════
+let syncAddedItems = []; // 新增书签完整列表
+let syncPendingAdded = []; // 用户勾选要加入监控的
+let syncCachedData = null; // 缓存上次检测到的变化，避免重复请求覆盖
+
+async function runBookmarkSync(showModal = false) {
+  try {
+    const res = await fetch('/api/bookmarks/sync');
+    const data = await res.json();
+    if (data.first_run) return; // 首次建立快照，静默
+
+    const { added, removed } = data;
+    const hasChanges = added.length > 0 || removed.length > 0;
+
+    if (!hasChanges) {
+      if (showModal) {
+        // 手动点击时，显示无变化弹窗
+        openSyncModalWithData(added, removed);
+      }
+      return;
+    }
+
+    // 有变化时：显示红点提示，如果是自动触发则仅提示；手动点击直接弹窗
+    if (removed.length > 0) {
+      // 已删除的书签已在后端移除监控，前端刷新监控列表
+      await loadMonitors();
+      const removedMonitored = removed.filter(r => r.was_monitored);
+      if (removedMonitored.length > 0 && !showModal) {
+        toast(`🗑 ${removedMonitored.length} 个已删除书签从监控中移除`, 4000);
+      }
+    }
+
+    if (added.length > 0) {
+      // 显示红点
+      document.getElementById('sync-notify-dot').classList.add('show');
+    }
+
+    // 缓存供弹窗使用（避免点按钮时重新请求导致数据丢失）
+    syncCachedData = { added, removed };
+    syncAddedItems = added;
+
+    if (showModal) {
+      openSyncModalWithData(added, removed);
+    } else if (added.length > 0) {
+      // 自动检测到新书签，直接弹窗
+      openSyncModalWithData(added, removed);
+    }
+  } catch (e) {
+    console.warn('[sync] 书签同步失败', e);
+  }
+}
+
+function openSyncModal() {
+  document.getElementById('sync-notify-dot').classList.remove('show');
+  document.getElementById('sync-modal').classList.add('open');
+
+  // 有缓存的变化数据，直接展示，不重新请求（重新请求快照已更新会拿到空）
+  if (syncCachedData) {
+    openSyncModalWithData(syncCachedData.added, syncCachedData.removed);
+    syncCachedData = null; // 展示后清空缓存
+    return;
+  }
+
+  // 没有缓存（手动点击但没有自动检测过），重新请求
+  document.getElementById('sync-modal-desc').textContent = '正在对比书签变化…';
+  document.getElementById('sync-added-section').style.display = 'none';
+  document.getElementById('sync-removed-section').style.display = 'none';
+  document.getElementById('sync-nochange').style.display = 'none';
+  document.getElementById('sync-add-btn').style.display = 'none';
+  runBookmarkSync(true);
+}
+
+function openSyncModalWithData(added, removed) {
+  // 填充弹窗内容
+  syncAddedItems = added;
+  syncPendingAdded = [];
+
+  const desc = [];
+  if (added.length > 0) desc.push(`<span style="color:var(--green)">${added.length} 个新书签</span>`);
+  if (removed.length > 0) desc.push(`<span style="color:var(--red)">${removed.length} 个书签已删除</span>`);
+  document.getElementById('sync-modal-desc').innerHTML =
+    desc.length > 0 ? ('检测到书签变化：' + desc.join('，')) : '书签与上次记录无变化。';
+
+  // 新增区域
+  const addedSection = document.getElementById('sync-added-section');
+  if (added.length > 0) {
+    document.getElementById('sync-added-count').textContent = added.length;
+    const list = document.getElementById('sync-added-list');
+    list.innerHTML = '';
+    added.forEach((bm, i) => {
+      const hostname = (() => { try { return new URL(bm.url).hostname; } catch { return ''; } })();
+      const pathStr = bm.folder_path.slice(1).join(' › ') || bm.folder_path[0] || '';
+      const row = document.createElement('div');
+      row.className = 'sync-row';
+      row.innerHTML = `
+        <input type="checkbox" class="sync-row-cb" id="sync-cb-${i}" checked onchange="syncRefreshAddBtn()">
+        <img class="sync-row-favicon" src="https://www.google.com/s2/favicons?domain=${hostname}&sz=16" onerror="this.style.display='none'">
+        <label for="sync-cb-${i}" class="sync-row-name" style="cursor:pointer" title="${bm.url}">${bm.name}</label>
+        <span class="sync-row-path" title="${pathStr}">${pathStr}</span>
+      `;
+      list.appendChild(row);
+    });
+    addedSection.style.display = 'block';
+    document.getElementById('sync-add-btn').style.display = '';
+    syncRefreshAddBtn();
+  } else {
+    addedSection.style.display = 'none';
+  }
+
+  // 删除区域
+  const removedSection = document.getElementById('sync-removed-section');
+  if (removed.length > 0) {
+    document.getElementById('sync-removed-count').textContent = removed.length;
+    const list = document.getElementById('sync-removed-list');
+    list.innerHTML = '';
+    removed.forEach(bm => {
+      const pathStr = bm.folder_path.slice(1).join(' › ') || bm.folder_path[0] || '';
+      const row = document.createElement('div');
+      row.className = 'sync-row';
+      row.innerHTML = `
+        <span class="sync-row-favicon">🗑</span>
+        <span class="sync-row-name" style="text-decoration:line-through;opacity:.6" title="${bm.url}">${bm.name}</span>
+        <span class="sync-row-path">${pathStr}</span>
+        <span class="sync-row-del ${bm.was_monitored ? 'was-monitored' : 'not-monitored'}">
+          ${bm.was_monitored ? '已移出监控' : '未监控'}
+        </span>
+      `;
+      list.appendChild(row);
+    });
+    removedSection.style.display = 'block';
+  } else {
+    removedSection.style.display = 'none';
+  }
+
+  // 无变化
+  document.getElementById('sync-nochange').style.display =
+    (added.length === 0 && removed.length === 0) ? 'block' : 'none';
+
+  document.getElementById('sync-modal').classList.add('open');
+}
+
+function closeSyncModal() {
+  document.getElementById('sync-modal').classList.remove('open');
+}
+
+function syncSelectAll() {
+  document.querySelectorAll('.sync-row-cb').forEach(cb => cb.checked = true);
+  syncRefreshAddBtn();
+}
+
+function syncSelectNone() {
+  document.querySelectorAll('.sync-row-cb').forEach(cb => cb.checked = false);
+  syncRefreshAddBtn();
+}
+
+function syncRefreshAddBtn() {
+  const checked = document.querySelectorAll('.sync-row-cb:checked').length;
+  const btn = document.getElementById('sync-add-btn');
+  btn.textContent = checked > 0 ? `加入监控（${checked} 个）` : '加入监控';
+  btn.disabled = checked === 0;
+}
+
+async function confirmSyncAdd() {
+  const checkboxes = document.querySelectorAll('.sync-row-cb');
+  const selected = syncAddedItems.filter((_, i) => checkboxes[i]?.checked);
+  if (selected.length === 0) return;
+
+  const btn = document.getElementById('sync-add-btn');
+  btn.disabled = true;
+  btn.textContent = '添加中…';
+
+  const res = await fetch('/api/monitors/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: selected })
+  });
+  const data = await res.json();
+  await loadMonitors();
+  closeSyncModal();
+  toast(`✅ 已添加 ${data.added?.length || 0} 个监控项`);
+}
+
+// ══════════════════════════════════
+// Init
+// ══════════════════════════════════
+(async () => {
+  await loadMonitors();
+  await loadBookmarks();
+  // 页面加载后自动检测书签变化
+  await runBookmarkSync(false);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  书签监控系统 - Windows 任务计划程序配置
+  ==========================================
+  安装方法（以管理员身份运行 install.bat）
+  手动导入：任务计划程序 → 操作 → 导入任务 → 选择本文件
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <RegistrationInfo>
+    <Date>2024-01-01T00:00:00</Date>
+    <Author>BookmarkMonitor</Author>
+    <Description>书签更新监控系统后端服务，开机自动在后台启动 Flask 服务（端口 5000）</Description>
+    <URI>\BookmarkMonitor</URI>
+  </RegistrationInfo>
+
+  <Triggers>
+    <!-- 触发器1：用户登录时启动 -->
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT10S</Delay>
+    </LogonTrigger>
+  </Triggers>
+
+  <Principals>
+    <Principal id="Author">
+      <!-- 使用当前登录用户身份运行 -->
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <!-- 出错后每 1 分钟重试，最多重试 3 次 -->
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+
+  <Actions Context="Author">
+    <Exec>
+      <!-- ⚠️  install.bat 会自动将下面路径替换为真实路径，无需手动修改 -->
+      <Command>PYTHON_EXE_PATH</Command>
+      <Arguments>APP_PY_PATH</Arguments>
+      <WorkingDirectory>APP_DIR_PATH</WorkingDirectory>
+    </Exec>
+  </Actions>
+
+</Task>

@@ -1,0 +1,39 @@
+# 用户数据（含隐私信息，不提交）
+config.json
+config.json.bak
+bookmark_snapshot.json
+
+# 临时文件
+tmp_*.html
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
