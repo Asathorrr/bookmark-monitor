@@ -40,6 +40,39 @@ def get_chrome_bookmarks_path():
         return os.path.expanduser("~/.config/google-chrome/Default/Bookmarks")
 
 
+def _recover_config():
+    """尝试用容错方式解析损坏的 config.json，返回解析结果或 None。"""
+    try:
+        with open(CONFIG_FILE, "rb") as f:
+            raw = f.read()
+        # 去掉末尾多余的 } (文件截断/重复写入导致)
+        while raw.rstrip(b"\r\n ").endswith(b"}"):
+            candidate = raw.rstrip(b"\r\n ")[:-1]
+            try:
+                data = json.loads(candidate.decode("utf-8", errors="replace"), strict=False)
+                if isinstance(data, dict) and "monitors" in data:
+                    raw = candidate
+                    break
+            except Exception:
+                pass
+            break
+        text = raw.decode("utf-8", errors="replace")
+        data = json.loads(text, strict=False)
+        if isinstance(data, dict):
+            print("[恢复] config.json 已用容错模式加载，建议检查数据完整性")
+            # 清空无法正确解码的 last_text 字段（含替换字符）
+            for m in data.get("monitors", []):
+                if "\ufffd" in m.get("last_text", ""):
+                    m["last_text"] = ""
+                    m["last_hash"] = ""
+                    m["status"] = "pending"
+            save_config(data)
+            return data
+    except Exception as e2:
+        print(f"[错误] config.json 容错加载也失败: {e2}")
+    return None
+
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {"monitors": [], "cookies": {}, "selector_rules": {}}
@@ -47,8 +80,11 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception as e:
-        print(f"[警告] config.json 读取失败: {e}，使用空配置")
-        return {"monitors": [], "cookies": {}, "selector_rules": {}}
+        print(f"[警告] config.json 读取失败: {e}，尝试容错恢复")
+        cfg = _recover_config()
+        if cfg is None:
+            print("[错误] 容错恢复失败，使用空配置")
+            return {"monitors": [], "cookies": {}, "selector_rules": {}}
     cfg.setdefault("monitors", [])
     cfg.setdefault("cookies", {})
     cfg.setdefault("selector_rules", {})
@@ -82,6 +118,16 @@ def _save_snapshot(data):
 def save_config(data):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def sanitize_text(text):
+    """移除可能导致 JSON 损坏的非法字符（C1 控制字符、代理对等）。"""
+    if not isinstance(text, str):
+        return ""
+    # 替换代理字符（Python 中可能因错误解码而出现）
+    text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    # 移除 C1 控制字符（0x80-0x9F），保留普通 ASCII 控制字符让 json 自行转义
+    return "".join(c for c in text if not ("\x80" <= c <= "\x9f"))
 
 
 def get_hostname(url):
@@ -1132,7 +1178,7 @@ def check_one_monitor(monitor_id):
         else:
             m["status"] = "unchanged"
         m["last_hash"]    = new_hash
-        m["last_text"]    = text
+        m["last_text"]    = sanitize_text(text)
         m["last_checked"] = datetime.utcnow().isoformat()
     except Exception as e:
         m["status"] = "error"
@@ -1383,7 +1429,7 @@ def check_updates():
                 m["last_text_preview"] = text[:200]
                 m["diff"]              = ""
             m["last_hash"] = new_hash
-            m["last_text"] = text
+            m["last_text"] = sanitize_text(text)
         except Exception as e:
             m["status"]            = "error"
             m["last_text_preview"] = str(e)
